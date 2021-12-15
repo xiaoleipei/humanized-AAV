@@ -1,0 +1,261 @@
+#the following code is run by R 4.0.0
+####caret-machine learing model
+library(caret)
+library(mlbench)
+
+#set work dir
+setwd("D:/jupyter_notebook")
+
+#read original data
+bacteria_psa<- read.table(file = "bacteria_psa.txt", sep = "\t",header = T)
+human_psa<- read.table(file = "human_psa.txt", sep = "\t",header = T)
+virus_psa<- read.table(file = "virus_psa_3.txt", sep = "\t",header = T)
+aav_psa<- read.table(file = "aavlibrary_psa_2.txt", sep = "\t",header = T)
+
+#exclude unnecessary variable
+virus_psa=virus_psa[,-23]
+
+
+#minize the sample, to short the training time
+virus_psa2=virus_psa[sample(nrow(virus_psa), 10000), ]
+human_psa2=human_psa[sample(nrow(human_psa), 10000), ]
+bacteria_psa2=bacteria_psa[sample(nrow(bacteria_psa), 10000), ]
+
+psa=rbind(human_psa2, virus_psa2)
+
+#treat the NA value
+psa[is.na(psa)]<-1
+
+psa$group=as.factor(psa$group)
+
+
+set.seed(123
+#createDataPartition
+inTrain <- createDataPartition(
+  y = psa$group,
+  ##the outcome data are needed
+  p = .75,
+  ##The percentage of data in the
+  ## training set
+  list = FALSE
+)
+##The format of the results
+str(inTrain)
+
+training <- psa[ inTrain,-1]
+testing  <- psa[-inTrain,-1]
+nrow(training)
+
+#PLS-DA (partial least squares discriminant analysis)
+#add option tuneLength=15
+plsFit <- train(
+  group~ .,
+  data = training,
+  method = "pls",
+  preProc = c("center", "scale"),
+  ##added:
+  tuneLength = 15
+)
+
+#trainControl()
+#method: boot, boot632, cv, repeatedcv, LOOCV, LGOCV
+#number: K=10
+#repeats: 3
+
+ctrl <- trainControl(method = "repeatedcv",number= 10,  repeats = 3)   
+
+plsFit <- train(
+  group ~ .,
+  data = training,
+  method = "pls",
+  preProc = c("center", "scale"),
+  tuneLength = 15,
+  ## added:
+  trControl = ctrl
+)
+
+ctrl <- trainControl(
+  method = "repeatedcv", #K=10，
+  repeats = 3,          #3 times
+  classProbs = TRUE,    #obtain ROC
+  summaryFunction = twoClassSummary  ##2 classification
+)
+
+class(training$group)
+
+set.seed(123)
+plsFit <- train(
+  group ~ .,
+  data = training,
+  method = "pls",
+  preProc = c("center", "scale"),
+  tuneLength = 15,
+  trControl = ctrl,
+  metric = "ROC"
+)
+plsFit  
+
+ggplot(plsFit)
+
+#extral data predict
+plsClasses <- predict(plsFit, newdata = testing)
+str(plsClasses)
+### get the probability of the every viable
+plsProbs <- predict(plsFit, newdata = testing, type = "prob")
+head(plsProbs)
+### confusionmatrix
+confusionMatrix(data = plsClasses, testing$group)
+
+#regularized discriminant model
+## To illustrate, a custom grid is used
+rdaGrid = data.frame(gamma = (0:4)/4, lambda = 3/4)
+set.seed(123)
+rdaFit <- train(
+  group ~ .,
+  data = training,
+  method = "rda",
+  tuneGrid = rdaGrid,
+  trControl = ctrl,
+  metric = "ROC"
+)
+rdaFit
+
+#predict and confusionmatrix
+
+rdaClasses <- predict(rdaFit, newdata = testing)
+
+confusionMatrix(rdaClasses, testing$group)
+
+#compare different model
+
+resamps <- resamples(list(pls = plsFit, rda = rdaFit))
+summary(resamps)
+
+xyplot(resamps, what = "BlandAltman") #visualized
+
+
+#SVM（support vector machine）
+#build SVM
+
+ctrl <- trainControl(method = "repeatedcv", number=10, repeats = 3)   
+set.seed(123)
+
+svm_Linear <- train(
+  group ~ .,
+  data = training,
+  method = "svmLinear",
+  preProc = c("center","scale"),  ##(nean=0, sd=1) 
+  tuneLength = 10,
+  trControl = ctrl
+)
+
+
+#SVM predict
+test_pred <- predict(svm_Linear, newdata = testing)
+confusionMatrix(data = test_pred, testing$group)
+
+#adjust C value
+training$group=as.factor(training$group)
+
+
+grid <- expand.grd(C= c(0, 0.01, 0.05, 0.1, 0.25, 0.75, 1))
+set.seed(123)
+svm_Linear_Grid <- train(
+  group ~ .,
+  data = training,
+  method = "svmLinear",
+  preProc = c("center", "scale"),  ##(nean=0, sd=1)
+  trControl = ctrl,  
+  tuneGrid = grid
+)
+svm_Linear_Grid
+
+#SVM-radial
+ctrl <- trainControl(method = "repeatedcv", number=10, repeats = 3)  
+grid <- expand.grd(C= c(0, 0.01, 0.05, 0.1, 0.25, 0.75, 1))
+set.seed(123)
+svm_Radial <- train(
+  group ~ .,
+  data = training,
+  method = "svmRadial",
+  preProc = c("center", "scale"),  ##(nean=0, sd=1)
+  tuneLength = 10,
+  trControl = ctrl  
+  ##added
+  #tuneGrid = grid
+)
+ggplot(svm_Radial)
+
+svm_Radial
+
+#SVM=radial predict
+test_pred_Radial <- predict(svm_Radial, newdata = testing)
+test_pred_Grid 
+confusionMatrix(data = test_pred_Radial , testing$group)
+
+#tune the model
+gird_radial <- expand.grid(C=c(0, 0.05, 0.1, 0.25, 0.5, 0.75,1,1.5,2,5, 10, 15, 20),
+                           sigma =c(0, 0.01:2) )
+# 0.25,0.5,0.75,0.9   
+set.seed(123)
+svm_Radial_Grid <- train(
+  group ~ .,
+  data = training,
+  method = "svmRadial",
+  preProc = c("center", "scale"),  ##(nean=0, sd=1)
+  tuneLength = 10,
+  trControl = ctrl,  
+  ##added
+  tuneGrid = gird_radial
+)
+svm_Radial_Grid
+ggplot(svm_Radial_Grid)
+
+test_pred_Radial_Grid <- predict(svm_Radial_Grid, newdata = testing)
+
+confusionMatrix(data = test_pred_Radial_Grid , testing$group)
+
+#visualize the variables importance
+### **Identify important predicting 
+#### Intrinsic variable importance of the svml model:
+svmlImp <- varImp(svm_Linear, scale = FALSE)
+svmlImp
+
+#### Plot variable importance of top predictors
+library(dplyr)
+svmlImp_df <- as.data.frame( svmlImp$importance )
+svmlImp_df$features <- rownames( svmlImp_df )
+svmlImp_df_sorted <- arrange( svmlImp_df  , desc(virus)  )
+
+#### Top 20: 
+plot(svmlImp, top = 20)
+
+#read AAV data
+aav_psa[is.na(aav_psa)]<-1
+
+#pls predicting
+testing=aav_psa[,-1]
+plsClasses <- predict(plsFit, newdata = testing)
+str(plsClasses)
+
+### get the prediction prob
+plsProbs <- predict(plsFit, newdata = testing, type = "prob")
+head(plsProbs)
+
+### result output
+aav_pred=cbind(aav_psa,plsProbs)
+
+#RDA predict
+plsProbs <- predict(rdaFit, newdata = testing, type = "prob")
+aav_pred=cbind(aav_pred,plsProbs)
+
+#svmlinearyuce
+plsProbs <- predict(svm_Linear, newdata = testing)
+aav_pred=cbind(aav_pred,plsProbs)
+
+#svmradial predict
+plsProbs <- predict(svm_Radial_Grid, newdata = testing)
+aav_pred=cbind(aav_pred,plsProbs)
+
+#read table
+write.table(aav_pred,"aav_pre_20211214.txt",sep="\t",row.names=F)
